@@ -179,70 +179,49 @@ function LoginPage({onLogin}){
   );
 }
 
-// ── Clock Modal (FIXED CAMERA) ────────────────────────────
+// ── Clock Modal (WITH FLIP CAMERA) ───────────────────────
 function ClockModal({staffId,staffName,type,onSave,onClose}){
   const[step,setStep]=useState("choose");
   const[photo,setPhoto]=useState(null);
   const[note,setNote]=useState("");
   const[saving,setSaving]=useState(false);
   const[camErr,setCamErr]=useState("");
+  const[facing,setFacing]=useState("user");
   const vref=useRef(null),sref=useRef(null);
-
   const stopCam=()=>{if(sref.current){sref.current.getTracks().forEach(t=>t.stop());sref.current=null;}};
-
-  const startCam=async()=>{
-    setCamErr("");
-    if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){
-      setCamErr("Camera not supported on this browser. Please use Upload.");
-      return;
-    }
+  const startCam=async(facingMode="user")=>{
+    setCamErr("");stopCam();
+    if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){setCamErr("Camera not supported. Please use Upload.");return;}
     try{
       let stream;
-      // Try back camera first (phone), then any camera
-      try{stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:"environment"}},audio:false});}
+      try{stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:facingMode}},audio:false});}
       catch(e){stream=await navigator.mediaDevices.getUserMedia({video:true,audio:false});}
-      sref.current=stream;
-      setStep("camera");
-      // Wait for DOM then set srcObject
-      setTimeout(()=>{
-        if(vref.current){
-          vref.current.srcObject=stream;
-          vref.current.play().catch(()=>{});
-        }
-      },100);
+      sref.current=stream;setFacing(facingMode);setStep("camera");
+      setTimeout(()=>{if(vref.current){vref.current.srcObject=stream;vref.current.play().catch(()=>{});}},100);
     }catch(e){
       let msg="Camera access denied.";
-      if(e.name==="NotFoundError")msg="No camera found on this device.";
-      else if(e.name==="NotAllowedError")msg="Camera permission denied. Please allow camera access in your browser settings.";
-      else if(e.name==="NotReadableError")msg="Camera is in use by another app.";
+      if(e.name==="NotFoundError")msg="No camera found.";
+      else if(e.name==="NotAllowedError")msg="Camera permission denied. Allow in browser settings.";
+      else if(e.name==="NotReadableError")msg="Camera in use by another app.";
       setCamErr(msg+" Please use Upload instead.");
     }
   };
-
+  const flipCam=()=>startCam(facing==="user"?"environment":"user");
   const snap=()=>{
     const v=vref.current;if(!v)return;
-    const c=document.createElement("canvas");
-    c.width=v.videoWidth||640;c.height=v.videoHeight||480;
-    const ctx=c.getContext("2d");ctx.drawImage(v,0,0);
+    const c=document.createElement("canvas");c.width=v.videoWidth||640;c.height=v.videoHeight||480;
+    const ctx=c.getContext("2d");
+    if(facing==="user"){ctx.translate(c.width,0);ctx.scale(-1,1);}
+    ctx.drawImage(v,0,0);
+    if(facing==="user"){ctx.setTransform(1,0,0,1,0,0);}
     stamp(c,ctx,staffName,type);
-    setPhoto(c.toDataURL("image/jpeg",.85));
-    stopCam();setStep("preview");
+    setPhoto(c.toDataURL("image/jpeg",.85));stopCam();setStep("preview");
   };
-
   const upload=e=>{
     const f=e.target.files[0];if(!f)return;
     const r=new FileReader();
-    r.onload=()=>{
-      const img=new Image();
-      img.onload=()=>{
-        const c=document.createElement("canvas");c.width=img.width;c.height=img.height;
-        const ctx=c.getContext("2d");ctx.drawImage(img,0,0);
-        stamp(c,ctx,staffName,type);
-        setPhoto(c.toDataURL("image/jpeg",.85));setStep("preview");
-      };img.src=r.result;
-    };r.readAsDataURL(f);
+    r.onload=()=>{const img=new Image();img.onload=()=>{const c=document.createElement("canvas");c.width=img.width;c.height=img.height;const ctx=c.getContext("2d");ctx.drawImage(img,0,0);stamp(c,ctx,staffName,type);setPhoto(c.toDataURL("image/jpeg",.85));setStep("preview");};img.src=r.result;};r.readAsDataURL(f);
   };
-
   const confirm=async()=>{
     setSaving(true);
     const record={id:Date.now().toString(),staffId,type,photo,timestamp:new Date().toISOString(),note};
@@ -250,17 +229,11 @@ function ClockModal({staffId,staffName,type,onSave,onClose}){
     const now=new Date();
     const timeStr=now.toLocaleString("en-MY",{hour:"2-digit",minute:"2-digit"});
     const dateStr=now.toLocaleDateString("en-MY",{weekday:"short",month:"short",day:"numeric"});
-    const caption=`${type==="in"?"🟢":"🔴"} <b>${staffName}</b> ${type==="in"?"clocked IN":"clocked OUT"}
-⏰ ${timeStr} · ${dateStr}${note?`
-📝 ${note}`:""}
-
-— JJ Portal · Ningji`;
+    const caption=`${type==="in"?"🟢":"🔴"} <b>${staffName}</b> ${type==="in"?"clocked IN":"clocked OUT"}\n⏰ ${timeStr} · ${dateStr}${note?`\n📝 ${note}`:""}}\n\n— JJ Portal · Ningji`;
     if(photo)await tgPhoto(photo,caption);else await tg(caption);
     setSaving(false);onClose();
   };
-
   useEffect(()=>()=>stopCam(),[]);
-
   return(
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.65)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:500,padding:20}}>
       <div style={{background:"white",borderRadius:20,padding:28,width:400,maxHeight:"92vh",overflowY:"auto",boxShadow:"0 24px 80px rgba(0,0,0,.3)"}}>
@@ -271,21 +244,28 @@ function ClockModal({staffId,staffName,type,onSave,onClose}){
         {camErr&&<div style={{background:"#FEF2F2",border:"1.5px solid #FCA5A5",borderRadius:10,padding:"10px 14px",marginBottom:14,color:"#EF4444",fontSize:13}}>{camErr}</div>}
         {step==="choose"&&(
           <div>
-            <p style={{color:"#6B7B6C",fontSize:13,marginBottom:20}}>Take or upload a photo. It will be sent to the manager via Telegram.</p>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-              <button onClick={startCam} style={{...Btn("primary",{flexDirection:"column",padding:"22px 16px",height:105,justifyContent:"center",borderRadius:12}),fontSize:12}}>
-                <span style={{fontSize:30,marginBottom:8}}>📸</span>Take Photo
+            <p style={{color:"#6B7B6C",fontSize:13,marginBottom:16}}>Take or upload a photo. It will be sent to manager via Telegram.</p>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:10}}>
+              <button onClick={()=>startCam("user")} style={{...Btn("primary",{flexDirection:"column",padding:"20px 14px",height:100,justifyContent:"center",borderRadius:12}),fontSize:12}}>
+                <span style={{fontSize:28,marginBottom:8}}>🤳</span>Selfie
               </button>
-              <label style={{...Btn("sec",{flexDirection:"column",padding:"22px 16px",height:105,justifyContent:"center",cursor:"pointer",borderRadius:12}),fontSize:12}}>
-                <span style={{fontSize:30,marginBottom:8}}>📁</span>Upload
-                <input type="file" accept="image/*" capture="environment" onChange={upload} style={{display:"none"}}/>
-              </label>
+              <button onClick={()=>startCam("environment")} style={{...Btn("sec",{flexDirection:"column",padding:"20px 14px",height:100,justifyContent:"center",borderRadius:12}),fontSize:12}}>
+                <span style={{fontSize:28,marginBottom:8}}>📷</span>Back Camera
+              </button>
             </div>
+            <label style={{...Btn("sec",{width:"100%",justifyContent:"center",padding:"13px",borderRadius:12,cursor:"pointer"}),display:"flex",fontSize:12}}>
+              <span style={{fontSize:18,marginRight:8}}>📁</span>Upload from Gallery
+              <input type="file" accept="image/*" onChange={upload} style={{display:"none"}}/>
+            </label>
           </div>
         )}
         {step==="camera"&&(
           <div>
-            <video ref={vref} autoPlay playsInline muted style={{width:"100%",borderRadius:12,marginBottom:12,background:"#000",maxHeight:300,objectFit:"cover",display:"block"}}/>
+            <div style={{position:"relative",marginBottom:12}}>
+              <video ref={vref} autoPlay playsInline muted style={{width:"100%",borderRadius:12,background:"#000",maxHeight:300,objectFit:"cover",display:"block",transform:facing==="user"?"scaleX(-1)":"none"}}/>
+              <button onClick={flipCam} title="Flip Camera" style={{position:"absolute",top:10,right:10,background:"rgba(0,0,0,0.55)",border:"2px solid rgba(255,255,255,0.3)",borderRadius:"50%",width:42,height:42,cursor:"pointer",fontSize:20,display:"flex",alignItems:"center",justifyContent:"center",color:"white"}}>🔄</button>
+              <div style={{position:"absolute",bottom:10,left:"50%",transform:"translateX(-50%)",background:"rgba(0,0,0,0.5)",color:"white",fontSize:10,padding:"3px 10px",borderRadius:20}}>{facing==="user"?"Front Camera":"Back Camera"}</div>
+            </div>
             <div style={{display:"flex",gap:10}}>
               <button onClick={()=>{stopCam();setStep("choose");}} style={{...Btn("sec",{flex:1,justifyContent:"center"})}}>Cancel</button>
               <button onClick={snap} style={{...Btn("primary",{flex:2,justifyContent:"center",padding:14,borderRadius:12})}}>📸 Capture</button>
