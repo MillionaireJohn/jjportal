@@ -859,6 +859,7 @@ function App(){
   const[complaints,setComplaints]=useState([]);
   const[salaries,setSalaries]=useState([]);
   const[accounts,setAccounts]=useState([]);
+  const[isMobile,setIsMobile]=useState(window.innerWidth<768);
 
   const loadAll=async()=>{
     const[st,sc,cl,cp,sl,ac]=await Promise.all([db.getStaff(),db.getSchedules(),db.getClocks(),db.getComplaints(),db.getSalaries(),db.getAccounts()]);
@@ -873,6 +874,7 @@ function App(){
   };
 
   useEffect(()=>{loadAll();},[]);
+  useEffect(()=>{const h=()=>setIsMobile(window.innerWidth<768);window.addEventListener("resize",h);return()=>window.removeEventListener("resize",h);},[]);
 
   useEffect(()=>{
     if(ut!=="manager")return;
@@ -892,9 +894,6 @@ function App(){
   if(loading)return <LoadingScreen/>;
   if(!ut)return <LoginPage onLogin={login}/>;
   if(ut==="staff"&&me)return <StaffApp me={me} onLogout={logout}/>;
-
-  const[isMobile,setIsMobile]=useState(window.innerWidth<768);
-  useEffect(()=>{const h=()=>setIsMobile(window.innerWidth<768);window.addEventListener("resize",h);return()=>window.removeEventListener("resize",h);},[]);
 
   return(
     <div style={{display:"flex",height:"100vh",background:"#F4FBF5",fontFamily:"'DM Sans',sans-serif",overflow:"hidden"}}>
