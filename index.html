@@ -427,9 +427,10 @@ function StaffApp({me,onLogout}){
   );
 }
 
-// ── Sidebar ───────────────────────────────────────────────
+// ── Sidebar (Desktop) + Mobile Bottom Nav ─────────────────
+const NAV=[{id:"dashboard",ic:"🏠",lb:"Dashboard"},{id:"schedule",ic:"📅",lb:"Schedule"},{id:"salary",ic:"💰",lb:"Salary"},{id:"staff",ic:"👥",lb:"Staff"},{id:"attendance",ic:"⏰",lb:"Attendance"},{id:"reports",ic:"📋",lb:"Reports"},{id:"accounts",ic:"🔑",lb:"Accounts"}];
+
 function Sidebar({page,setPage,exp,setExp,onLogout}){
-  const nav=[{id:"dashboard",ic:"🏠",lb:"Dashboard"},{id:"schedule",ic:"📅",lb:"Schedule"},{id:"salary",ic:"💰",lb:"Salary"},{id:"staff",ic:"👥",lb:"Staff"},{id:"attendance",ic:"⏰",lb:"Attendance"},{id:"reports",ic:"📋",lb:"Reports"},{id:"accounts",ic:"🔑",lb:"Accounts"}];
   return(
     <div onMouseEnter={()=>setExp(true)} onMouseLeave={()=>setExp(false)} style={{width:exp?"220px":"62px",transition:"width .28s ease",background:"#1A2E1B",display:"flex",flexDirection:"column",padding:"14px 0",flexShrink:0,overflow:"hidden",zIndex:50}}>
       <div style={{padding:"0 11px 14px",borderBottom:"1px solid rgba(255,255,255,.07)",marginBottom:6,display:"flex",alignItems:"center",gap:10,whiteSpace:"nowrap"}}>
@@ -437,7 +438,7 @@ function Sidebar({page,setPage,exp,setExp,onLogout}){
         {exp&&<div><div style={{color:"white",fontWeight:700,fontSize:14}}>JJ Portal</div><div style={{color:"rgba(255,255,255,.3)",fontSize:10}}>Ningji Lemon Tea</div></div>}
       </div>
       <div style={{flex:1,padding:"0 7px",overflowY:"auto"}}>
-        {nav.map(({id,ic,lb})=>(
+        {NAV.map(({id,ic,lb})=>(
           <div key={id} onClick={()=>setPage(id)} style={{display:"flex",alignItems:"center",gap:11,padding:"10px 9px",borderRadius:10,cursor:"pointer",marginBottom:2,whiteSpace:"nowrap",overflow:"hidden",background:page===id?"#2EAD3F":"transparent",color:page===id?"white":"rgba(255,255,255,.45)",transition:"all .15s"}} onMouseEnter={e=>{if(page!==id)e.currentTarget.style.background="rgba(255,255,255,.08)";}} onMouseLeave={e=>{if(page!==id)e.currentTarget.style.background="transparent";}}>
             <span style={{fontSize:15,flexShrink:0}}>{ic}</span>
             {exp&&<span style={{fontSize:13,fontWeight:500}}>{lb}</span>}
@@ -451,6 +452,45 @@ function Sidebar({page,setPage,exp,setExp,onLogout}){
         </div>
       </div>
     </div>
+  );
+}
+
+function MobileNav({page,setPage,onLogout}){
+  const[showMore,setShowMore]=useState(false);
+  const main=NAV.slice(0,4);
+  const more=NAV.slice(4);
+  return(
+    <>
+      {showMore&&(
+        <div onClick={()=>setShowMore(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.4)",zIndex:90}}/>
+      )}
+      {showMore&&(
+        <div style={{position:"fixed",bottom:65,left:0,right:0,background:"#1A2E1B",zIndex:100,borderRadius:"16px 16px 0 0",padding:"12px 8px 4px"}}>
+          {more.map(({id,ic,lb})=>(
+            <div key={id} onClick={()=>{setPage(id);setShowMore(false);}} style={{display:"flex",alignItems:"center",gap:14,padding:"14px 18px",borderRadius:10,cursor:"pointer",background:page===id?"#2EAD3F":"transparent",color:page===id?"white":"rgba(255,255,255,.7)",marginBottom:4}}>
+              <span style={{fontSize:20}}>{ic}</span>
+              <span style={{fontSize:15,fontWeight:500}}>{lb}</span>
+            </div>
+          ))}
+          <div onClick={onLogout} style={{display:"flex",alignItems:"center",gap:14,padding:"14px 18px",borderRadius:10,cursor:"pointer",color:"rgba(255,255,255,.4)",marginBottom:4}}>
+            <span style={{fontSize:20}}>🚪</span>
+            <span style={{fontSize:15}}>Logout</span>
+          </div>
+        </div>
+      )}
+      <div style={{position:"fixed",bottom:0,left:0,right:0,background:"#1A2E1B",display:"flex",zIndex:100,paddingBottom:"env(safe-area-inset-bottom,0px)",borderTop:"1px solid rgba(255,255,255,.1)"}}>
+        {main.map(({id,ic,lb})=>(
+          <button key={id} onClick={()=>setPage(id)} style={{flex:1,padding:"10px 4px 8px",border:"none",background:"transparent",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:3}}>
+            <span style={{fontSize:22}}>{ic}</span>
+            <span style={{fontSize:9,fontWeight:600,color:page===id?"#2EAD3F":"rgba(255,255,255,.4)",fontFamily:"'DM Sans',sans-serif"}}>{lb}</span>
+          </button>
+        ))}
+        <button onClick={()=>setShowMore(p=>!p)} style={{flex:1,padding:"10px 4px 8px",border:"none",background:"transparent",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:3}}>
+          <span style={{fontSize:22}}>⋯</span>
+          <span style={{fontSize:9,fontWeight:600,color:showMore?"#2EAD3F":"rgba(255,255,255,.4)",fontFamily:"'DM Sans',sans-serif"}}>More</span>
+        </button>
+      </div>
+    </>
   );
 }
 
@@ -472,12 +512,12 @@ function Dashboard({staff,schedules,setPage,clockRecords,complaints}){
         <p style={{fontFamily:"'Noto Sans SC',sans-serif",fontSize:17,color:"white",margin:"0 0 5px",fontWeight:500}}>{q.zh}</p>
         <p style={{color:"rgba(255,255,255,.55)",margin:0,fontSize:13,fontStyle:"italic"}}>{q.en}</p>
       </div>
-      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:16}}>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:10,marginBottom:14}}>
         {[{l:"On Shift Today",v:todayShifts.length,s:`of ${staff.length} staff`,c:"#2EAD3F",e:"👥"},{l:"Clocks Today",v:todayClocks.length,s:"records",c:"#3B82F6",e:"⏰"},{l:"Month Salary Est.",v:`RM ${monthPay.toFixed(0)}`,s:MONTHS[today.getMonth()],c:"#F59E0B",e:"💸"},{l:"Pending Reports",v:pending,s:"store issues",c:pending>0?"#EF4444":"#6B7B6C",e:"📋"}].map((s,i)=>(
           <div key={i} style={Card()}><div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}><div><div style={{fontSize:19,fontWeight:700,color:s.c,marginBottom:1}}>{s.v}</div><div style={{fontSize:12,fontWeight:500,color:"#1A2E1B"}}>{s.l}</div><div style={{fontSize:10,color:"#6B7B6C",marginTop:2}}>{s.s}</div></div><span style={{fontSize:21}}>{s.e}</span></div></div>
         ))}
       </div>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
+      <div style={{display:"grid",gridTemplateColumns:"1fr",gap:12}}>
         <div style={Card()}><h3 style={{margin:"0 0 12px",fontSize:14,fontWeight:600,color:"#1A2E1B"}}>Today's Shifts</h3>
           {todayShifts.length===0?<p style={{color:"#6B7B6C",fontSize:13,margin:0}}>No shifts today.</p>:todayShifts.map((sh,i)=>{const s=staff.find(x=>x.id===sh.staffId);if(!s)return null;return(<div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"7px 0",borderBottom:i<todayShifts.length-1?"1px solid #D4EDD6":"none"}}><div style={{width:32,height:32,borderRadius:"50%",background:gc(s.id),display:"flex",alignItems:"center",justifyContent:"center",color:"white",fontSize:11,fontWeight:700,flexShrink:0,overflow:"hidden"}}>{s.photo?<img src={s.photo} style={{width:32,height:32,borderRadius:"50%",objectFit:"cover"}} alt=""/>:gi(s.name)}</div><div><div style={{fontSize:13,fontWeight:600,color:"#1A2E1B"}}>{s.name}{sh.isPH&&<span style={{marginLeft:4,background:"#FEF3C7",color:"#92400E",fontSize:9,padding:"1px 5px",borderRadius:4,fontWeight:700}}>PH</span>}</div><div style={{fontSize:11,color:"#6B7B6C"}}>{fmt(sh.start)} – {fmt(sh.end)}</div></div></div>);})}
         </div>
@@ -853,19 +893,30 @@ function App(){
   if(!ut)return <LoginPage onLogin={login}/>;
   if(ut==="staff"&&me)return <StaffApp me={me} onLogout={logout}/>;
 
+  const[isMobile,setIsMobile]=useState(window.innerWidth<768);
+  useEffect(()=>{const h=()=>setIsMobile(window.innerWidth<768);window.addEventListener("resize",h);return()=>window.removeEventListener("resize",h);},[]);
+
   return(
     <div style={{display:"flex",height:"100vh",background:"#F4FBF5",fontFamily:"'DM Sans',sans-serif",overflow:"hidden"}}>
       <style>{`::-webkit-scrollbar{width:5px;}::-webkit-scrollbar-thumb{background:#C8DFC9;border-radius:3px;}`}</style>
-      <Sidebar page={page} setPage={setPage} exp={exp} setExp={setExp} onLogout={logout}/>
-      <main style={{flex:1,overflowY:"auto",padding:"26px 30px"}}>
-        {page==="dashboard"&&<Dashboard staff={staff} schedules={schedules} setPage={setPage} clockRecords={clocks} complaints={complaints}/>}
-        {page==="schedule"&&<SchedulePage staff={staff} schedules={schedules} reload={loadAll}/>}
-        {page==="salary"&&<SalaryPage staff={staff} schedules={schedules} sentSalaries={salaries} reload={loadAll}/>}
+      {!isMobile&&<Sidebar page={page} setPage={setPage} exp={exp} setExp={setExp} onLogout={logout}/>}
+      <main style={{flex:1,overflowY:"auto",padding:isMobile?"14px 14px 80px":"26px 30px"}}>
+        {isMobile&&(
+          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16,background:"#1A2E1B",margin:"-14px -14px 16px",padding:"12px 16px"}}>
+            <img src={LOGO_ICON} width="28" style={{objectFit:"contain"}} alt=""/>
+            <div style={{color:"white",fontWeight:700,fontSize:14}}>JJ Portal</div>
+            <div style={{marginLeft:"auto",color:"rgba(255,255,255,.4)",fontSize:12}}>{NAV.find(n=>n.id===page)?.ic} {NAV.find(n=>n.id===page)?.lb}</div>
+          </div>
+        )}
+        {page==="dashboard"&&<Dashboard staff={staff} schedules={schedules} setPage={setPage} clockRecords={clocks} complaints={complaints} isMobile={isMobile}/>}
+        {page==="schedule"&&<SchedulePage staff={staff} schedules={schedules} reload={loadAll} isMobile={isMobile}/>}
+        {page==="salary"&&<SalaryPage staff={staff} schedules={schedules} sentSalaries={salaries} reload={loadAll} isMobile={isMobile}/>}
         {page==="staff"&&<StaffPage staff={staff} reload={loadAll}/>}
         {page==="attendance"&&<AttendancePage staff={staff} clockRecords={clocks} reload={loadAll}/>}
         {page==="reports"&&<ReportsPage complaints={complaints} reload={loadAll} staff={staff}/>}
         {page==="accounts"&&<AccountsPage staffAccounts={accounts} reload={loadAll} staff={staff}/>}
       </main>
+      {isMobile&&<MobileNav page={page} setPage={setPage} onLogout={logout}/>}
     </div>
   );
 }
