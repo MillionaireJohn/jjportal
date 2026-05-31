@@ -56,15 +56,15 @@ const DSTAFF=[
   {id:"8",name:"James",phone:"",ic:"",emergency:"",dateJoined:"",hourlyRate:14,rateWeekday:14,rateWeekend:14,ratePHWeekday:16,ratePHWeekend:16,photo:""},
 ];
 const DACCS=[
-  {staffId:"0",username:"jhchong1309",password:"ningjistaff"},
-  {staffId:"1",username:"munimeiwei",password:"ningjistaff"},
-  {staffId:"2",username:"jiayingc24",password:"ningjistaff"},
-  {staffId:"3",username:"rachelkan08",password:"ningjistaff"},
-  {staffId:"4",username:"weichengsee",password:"ningjistaff"},
-  {staffId:"5",username:"kwokryan45",password:"ningjistaff"},
-  {staffId:"6",username:"joey796254",password:"ningjistaff"},
-  {staffId:"7",username:"jaclyncwc",password:"ningjistaff"},
-  {staffId:"8",username:"jamescheah1382",password:"ningjistaff"},
+  {staffId:"0",username:"jhchong1309",password:"ningji2947"},
+  {staffId:"1",username:"munimeiwei",password:"ningji6153"},
+  {staffId:"2",username:"jiayingc24",password:"ningji8472"},
+  {staffId:"3",username:"rachelkan08",password:"ningji3816"},
+  {staffId:"4",username:"weichengsee",password:"ningji5039"},
+  {staffId:"5",username:"kwokryan45",password:"ningji9264"},
+  {staffId:"6",username:"joey796254",password:"ningji1758"},
+  {staffId:"7",username:"jaclyncwc",password:"ningji7391"},
+  {staffId:"8",username:"jamescheah1382",password:"ningji4820"},
 ];
 
 // ── Helpers ───────────────────────────────────────────────
@@ -230,7 +230,7 @@ function ClockModal({staffId,staffName,type,onSave,onClose}){
     const now=new Date();
     const timeStr=now.toLocaleString("en-MY",{hour:"2-digit",minute:"2-digit"});
     const dateStr=now.toLocaleDateString("en-MY",{weekday:"short",month:"short",day:"numeric"});
-    const caption=`${type==="in"?"🟢":"🔴"} <b>${staffName}</b> ${type==="in"?"clocked IN":"clocked OUT"}\n⏰ ${timeStr} · ${dateStr}${note?`\n📝 ${note}`:""}}\n\n— JJ Portal · Ningji`;
+    const caption=`${type==="in"?"🟢":"🔴"} <b>${staffName}</b> ${type==="in"?"clocked IN ✅":"clocked OUT 🔴"}\n⏰ ${timeStr} · ${dateStr}${note?`\n📝 ${note}`:""}\n\n— JJ Portal · Ningji`;
     if(photo)await tgPhoto(photo,caption);else await tg(caption);
     setSaving(false);onClose();
   };
@@ -542,10 +542,12 @@ function SchedulePage({staff,schedules,reload}){
   const[modal,setModal]=useState(null);
   const[ns,setNs]=useState({staffId:"",start:"10:00",end:"15:00",note:"",isPH:false});
   const[copied,setCopied]=useState("");
+  const[editingShift,setEditingShift]=useState(null);
   const wd=weekOf(anchor),sy=anchor.getFullYear(),sm=anchor.getMonth();
   const add=async()=>{if(!ns.staffId)return;const shift={id:Date.now().toString(),...ns};await db.addShift(toKey(modal.date),shift);reload();setNs({staffId:"",start:"10:00",end:"15:00",note:"",isPH:false});};
   const del=async(id)=>{await db.deleteShift(id);reload();};
-  const genTxt=(s,y,m)=>{const lines=[`${s.name}:`];const days=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];const dim=new Date(y,m+1,0).getDate();for(let d=1;d<=dim;d++){const date=new Date(y,m,d),k=toKey(date);(schedules[k]||[]).filter(x=>x.staffId===s.id).forEach(sh=>{lines.push(`${days[date.getDay()]} ${d} ${fmt(sh.start)}-${fmt(sh.end)}${sh.isPH?" (PH)":""}${sh.note?` (${sh.note})`:""}`);});}return lines.join("\n");};
+  const saveEdit=async(oldId)=>{if(!editingShift)return;await db.deleteShift(oldId);await db.addShift(toKey(modal.date),{...editingShift,id:Date.now().toString()});setEditingShift(null);reload();};
+  const genTxt=(s,y,m)=>{const lines=[`${s.name}:`];const fullDays=["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];const dim=new Date(y,m+1,0).getDate();for(let d=1;d<=dim;d++){const date=new Date(y,m,d),k=toKey(date);(schedules[k]||[]).filter(x=>x.staffId===s.id).forEach(sh=>{lines.push(`${d}/${m+1} ${fullDays[date.getDay()]} ${fmt(sh.start)} - ${fmt(sh.end)}${sh.isPH?" (PH)":""}${sh.note?` (${sh.note})`:""}`);});}return lines.join("\n");};
   const copy=s=>{navigator.clipboard.writeText(genTxt(s,sy,sm));setCopied(s.id);setTimeout(()=>setCopied(""),2000);};
   const wa=s=>{if(!s.phone){alert("No phone for "+s.name);return;}window.open(`https://wa.me/${s.phone.replace(/\D/g,"")}?text=${encodeURIComponent(genTxt(s,sy,sm))}`,"_blank");};
   const grid=()=>{const first=new Date(sy,sm,1).getDay(),off=first===0?6:first-1,dim=new Date(sy,sm+1,0).getDate(),g=[];for(let i=0;i<off;i++)g.push(null);for(let i=1;i<=dim;i++)g.push(i);return g;};
@@ -598,7 +600,41 @@ function SchedulePage({staff,schedules,reload}){
             </div>
             <button onClick={()=>setModal(null)} style={{background:"none",border:"none",cursor:"pointer",fontSize:20,color:"#6B7B6C"}}>✕</button>
           </div>
-          {(schedules[toKey(modal.date)]||[]).map(sh=>{const s=staff.find(x=>x.id===sh.staffId);if(!s)return null;const r=getRate(s,modal.date,sh.isPH);return(<div key={sh.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"9px 11px",background:"#F4FBF5",borderRadius:8,marginBottom:7}}><div style={{display:"flex",alignItems:"center",gap:8}}><div style={{width:27,height:27,borderRadius:"50%",background:gc(s.id),display:"flex",alignItems:"center",justifyContent:"center",color:"white",fontSize:10,fontWeight:700}}>{gi(s.name)}</div><div><div style={{fontSize:13,fontWeight:600,color:"#1A2E1B"}}>{s.name}{sh.isPH&&<span style={{marginLeft:4,background:"#FEF3C7",color:"#92400E",fontSize:9,padding:"1px 5px",borderRadius:4}}>PH</span>}</div><div style={{fontSize:11,color:"#6B7B6C"}}>{fmt(sh.start)} – {fmt(sh.end)} · RM{r.toFixed(2)}/h · {getRateLabel(modal.date,sh.isPH)}</div></div></div><button onClick={()=>del(sh.id)} style={{...Btn("danger",{padding:"4px 9px"}),fontSize:12}}>🗑️</button></div>);})}
+          {(schedules[toKey(modal.date)]||[]).map(sh=>{const s=staff.find(x=>x.id===sh.staffId);if(!s)return null;const r=getRate(s,modal.date,sh.isPH);const isEditing=editingShift&&editingShift.id===sh.id;return(<div key={sh.id} style={{background:"#F4FBF5",borderRadius:8,marginBottom:7,overflow:"hidden"}}>
+            {!isEditing?(
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"9px 11px"}}>
+                <div style={{display:"flex",alignItems:"center",gap:8}}>
+                  <div style={{width:27,height:27,borderRadius:"50%",background:gc(s.id),display:"flex",alignItems:"center",justifyContent:"center",color:"white",fontSize:10,fontWeight:700}}>{gi(s.name)}</div>
+                  <div>
+                    <div style={{fontSize:13,fontWeight:600,color:"#1A2E1B"}}>{s.name}{sh.isPH&&<span style={{marginLeft:4,background:"#FEF3C7",color:"#92400E",fontSize:9,padding:"1px 5px",borderRadius:4}}>PH</span>}</div>
+                    <div style={{fontSize:11,color:"#6B7B6C"}}>{fmt(sh.start)} – {fmt(sh.end)} · RM{r.toFixed(2)}/h · {getRateLabel(modal.date,sh.isPH)}</div>
+                  </div>
+                </div>
+                <div style={{display:"flex",gap:6}}>
+                  <button onClick={()=>setEditingShift({...sh})} style={{...Btn("sec",{padding:"4px 9px"}),fontSize:12}}>✏️</button>
+                  <button onClick={()=>del(sh.id)} style={{...Btn("danger",{padding:"4px 9px"}),fontSize:12}}>🗑️</button>
+                </div>
+              </div>
+            ):(
+              <div style={{padding:"10px 11px"}}>
+                <p style={{margin:"0 0 8px",fontSize:12,fontWeight:600,color:"#1A2E1B"}}>Edit Shift — {s.name}</p>
+                <select value={editingShift.staffId} onChange={e=>setEditingShift(p=>({...p,staffId:e.target.value}))} style={{...Inp(),marginBottom:8,fontSize:13}}>{staff.map(st=><option key={st.id} value={st.id}>{st.name}</option>)}</select>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+                  <div><label style={{fontSize:10,color:"#6B7B6C",display:"block",marginBottom:2}}>Start</label><input type="time" value={editingShift.start} onChange={e=>setEditingShift(p=>({...p,start:e.target.value}))} style={{...Inp(),fontSize:13}}/></div>
+                  <div><label style={{fontSize:10,color:"#6B7B6C",display:"block",marginBottom:2}}>End</label><input type="time" value={editingShift.end} onChange={e=>setEditingShift(p=>({...p,end:e.target.value}))} style={{...Inp(),fontSize:13}}/></div>
+                </div>
+                <input placeholder="Note (optional)" value={editingShift.note||""} onChange={e=>setEditingShift(p=>({...p,note:e.target.value}))} style={{...Inp(),marginBottom:8,fontSize:13}}/>
+                <label style={{display:"flex",alignItems:"center",gap:8,marginBottom:10,cursor:"pointer"}}>
+                  <input type="checkbox" checked={editingShift.isPH||false} onChange={e=>setEditingShift(p=>({...p,isPH:e.target.checked}))} style={{width:15,height:15,accentColor:"#F59E0B"}}/>
+                  <span style={{fontSize:12,fontWeight:600,color:"#92400E"}}>🎉 Public Holiday</span>
+                </label>
+                <div style={{display:"flex",gap:8}}>
+                  <button onClick={()=>setEditingShift(null)} style={{...Btn("sec",{flex:1,justifyContent:"center"}),fontSize:12}}>Cancel</button>
+                  <button onClick={()=>saveEdit(sh.id)} style={{...Btn("primary",{flex:2,justifyContent:"center"}),fontSize:12}}>✅ Save</button>
+                </div>
+              </div>
+            )}
+          </div>);})}
           <div style={{background:"#E8F8EA",borderRadius:10,padding:14,marginTop:10}}>
             <p style={{margin:"0 0 10px",fontSize:13,fontWeight:600,color:"#1A2E1B"}}>Add Shift</p>
             <select value={ns.staffId} onChange={e=>setNs(p=>({...p,staffId:e.target.value}))} style={{...Inp(),marginBottom:9}}><option value="">Select staff...</option>{staff.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</select>
