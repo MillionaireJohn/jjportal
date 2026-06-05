@@ -228,7 +228,14 @@ function ClockModal({staffId,staffName,type,onSave,onClose}){
   const confirm=async()=>{
     setSaving(true);
     const record={id:Date.now().toString(),staffId,type,photo,timestamp:new Date().toISOString(),note};
-    await db.addClock(record);onSave(record);
+    try{
+      await db.addClock(record);
+      onSave(record);
+    }catch(e){
+      setSaving(false);
+      alert("Failed to save. Please check your internet and try again.");
+      return;
+    }
     const now=new Date();
     const timeStr=now.toLocaleString("en-MY",{hour:"2-digit",minute:"2-digit"});
     const dateStr=now.toLocaleDateString("en-MY",{weekday:"short",month:"short",day:"numeric"});
@@ -432,10 +439,9 @@ function StaffApp({me,onLogout}){
         </div>
       </div>
       {cModal&&<ClockModal staffId={me.id} staffName={me.name} type={cModal} onSave={r=>{
-          // Immediately update local state so UI responds instantly
+          // Update local state immediately — this is the source of truth
+          // DO NOT reload from Supabase here — it may not have committed yet
           setClocks(p=>[r,...p]);
-          // Then reload from Supabase after delay to confirm persistence
-          setTimeout(()=>loadClocks(),1200);
         }} onClose={()=>setCModal(null)}/>}
       {showRpt&&<ComplaintModal staffId={me.id} staffName={me.name} onSave={r=>{}} onClose={()=>setShowRpt(false)}/>}
     </div>
