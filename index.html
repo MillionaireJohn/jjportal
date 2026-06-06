@@ -97,7 +97,15 @@ const db={
   getSchedules:async()=>{const{data}=await sb.from("schedules").select("*");if(!data)return{};const map={};data.forEach(r=>{if(!map[r.date])map[r.date]=[];map[r.date].push({id:r.id,staffId:r.staff_id,start:r.start_time,end:r.end_time,note:r.note||"",isPH:r.is_ph||false});});return map;},
   addShift:async(date,shift)=>await sb.from("schedules").insert({id:shift.id,date,staff_id:shift.staffId,start_time:shift.start,end_time:shift.end,note:shift.note||"",is_ph:shift.isPH||false}),
   deleteShift:async(id)=>await sb.from("schedules").delete().eq("id",id),
-  getClocks:async()=>{const{data}=await sb.from("clock_records").select("*").order("timestamp",{ascending:false});return(data||[]).map(r=>({id:r.id,staffId:r.staff_id,type:r.type,photo:r.photo||"",timestamp:r.timestamp,note:r.note||"",managerNote:r.manager_note||""}));},
+  getClocks:async()=>{
+    // Exclude photo from initial fetch for fast loading
+    const{data}=await sb.from("clock_records").select("id,staff_id,type,timestamp,note,manager_note").order("timestamp",{ascending:false});
+    return(data||[]).map(r=>({id:r.id,staffId:r.staff_id,type:r.type,photo:null,hasPhoto:true,timestamp:r.timestamp,note:r.note||"",managerNote:r.manager_note||""}));
+  },
+  getClockPhoto:async(id)=>{
+    const{data}=await sb.from("clock_records").select("photo").eq("id",id).single();
+    return data?.photo||null;
+  },
   addClock:async(r)=>await sb.from("clock_records").insert({id:r.id,staff_id:r.staffId,type:r.type,photo:r.photo||"",timestamp:r.timestamp,note:r.note||"",manager_note:""}),
   updateClockNote:async(id,note)=>await sb.from("clock_records").update({manager_note:note}).eq("id",id),
   getComplaints:async()=>{const{data}=await sb.from("complaints").select("*").order("timestamp",{ascending:false});return(data||[]).map(r=>({id:r.id,staffId:r.staff_id,staffName:r.staff_name,photo:r.photo||"",note:r.note,timestamp:r.timestamp,resolved:r.resolved,resolvedAt:r.resolved_at}));},
@@ -210,6 +218,15 @@ function ClockModal({staffId,staffName,type,onSave,onClose}){
     }
   };
   const flipCam=()=>startCam(facing==="user"?"environment":"user");
+  const compressPhoto=(srcCanvas)=>{
+    // Resize to max 480px and compress heavily — selfies for attendance don't need high res
+    const MAX=480;
+    let w=srcCanvas.width,h=srcCanvas.height;
+    if(w>MAX||h>MAX){const r=Math.min(MAX/w,MAX/h);w=Math.floor(w*r);h=Math.floor(h*r);}
+    const out=document.createElement("canvas");out.width=w;out.height=h;
+    out.getContext("2d").drawImage(srcCanvas,0,0,w,h);
+    return out;
+  };
   const snap=()=>{
     const v=vref.current;if(!v)return;
     const c=document.createElement("canvas");c.width=v.videoWidth||640;c.height=v.videoHeight||480;
@@ -217,13 +234,25 @@ function ClockModal({staffId,staffName,type,onSave,onClose}){
     if(facing==="user"){ctx.translate(c.width,0);ctx.scale(-1,1);}
     ctx.drawImage(v,0,0);
     if(facing==="user"){ctx.setTransform(1,0,0,1,0,0);}
-    stamp(c,ctx,staffName,type);
-    setPhoto(c.toDataURL("image/jpeg",.85));stopCam();setStep("preview");
+    const compressed=compressPhoto(c);
+    stamp(compressed,compressed.getContext("2d"),staffName,type);
+    setPhoto(compressed.toDataURL("image/jpeg",0.35));
+    stopCam();setStep("preview");
   };
   const upload=e=>{
     const f=e.target.files[0];if(!f)return;
     const r=new FileReader();
-    r.onload=()=>{const img=new Image();img.onload=()=>{const c=document.createElement("canvas");c.width=img.width;c.height=img.height;const ctx=c.getContext("2d");ctx.drawImage(img,0,0);stamp(c,ctx,staffName,type);setPhoto(c.toDataURL("image/jpeg",.85));setStep("preview");};img.src=r.result;};r.readAsDataURL(f);
+    r.onload=()=>{
+      const img=new Image();
+      img.onload=()=>{
+        const c=document.createElement("canvas");c.width=img.width;c.height=img.height;
+        const ctx=c.getContext("2d");ctx.drawImage(img,0,0);
+        const compressed=compressPhoto(c);
+        stamp(compressed,compressed.getContext("2d"),staffName,type);
+        setPhoto(compressed.toDataURL("image/jpeg",0.35));
+        setStep("preview");
+      };img.src=r.result;
+    };r.readAsDataURL(f);
   };
   const confirm=async()=>{
     setSaving(true);
@@ -819,6 +848,23 @@ function StaffPage({staff,reload}){
   );
 }
 
+
+// ── Lazy Photo Component ──────────────────────────────────
+function LazyPhoto({recordId,onClick}){
+  const[photo,setPhoto]=useState(null);
+  const[loading,setLoading]=useState(false);
+  const load=async()=>{
+    if(photo||loading)return;
+    setLoading(true);
+    const p=await db.getClockPhoto(recordId);
+    setPhoto(p);setLoading(false);
+  };
+  useEffect(()=>{load();},[]);
+  if(loading)return<div style={{width:56,height:56,borderRadius:8,background:"#F4FBF5",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18}}>⏳</div>;
+  if(!photo)return null;
+  return<img src={photo} onClick={()=>onClick(photo)} style={{width:56,height:56,objectFit:"cover",borderRadius:8,cursor:"pointer",border:"2px solid #D4EDD6"}} alt=""/>;
+}
+
 // ── Attendance Page ───────────────────────────────────────
 function AttendancePage({staff,clockRecords,reload}){
   const[fs,setFs]=useState("all");
@@ -843,7 +889,7 @@ function AttendancePage({staff,clockRecords,reload}){
           {records.map((r,i)=>{const s=staff.find(x=>x.id===r.staffId);if(!s)return null;return(<div key={r.id} style={{display:"flex",alignItems:"center",gap:11,padding:"10px 0",borderBottom:i<records.length-1?"1px solid #D4EDD6":"none",flexWrap:"wrap"}}>
             <div style={{width:34,height:34,borderRadius:"50%",background:gc(s.id),display:"flex",alignItems:"center",justifyContent:"center",color:"white",fontSize:11,fontWeight:700,flexShrink:0,overflow:"hidden"}}>{s.photo?<img src={s.photo} style={{width:34,height:34,borderRadius:"50%",objectFit:"cover"}} alt=""/>:gi(s.name)}</div>
             <div style={{flex:1,minWidth:110}}><div style={{fontSize:14,fontWeight:600,color:"#1A2E1B"}}>{s.name}</div><div style={{fontSize:12,color:r.type==="in"?"#2EAD3F":"#EF4444",fontWeight:500}}>{r.type==="in"?"🟢 Clock In":"🔴 Clock Out"} · {new Date(r.timestamp).toLocaleTimeString("en-MY",{hour:"2-digit",minute:"2-digit"})}</div>{r.note&&<div style={{fontSize:11,color:"#6B7B6C"}}>Note: {r.note}</div>}{r.managerNote&&<div style={{fontSize:11,color:"#F59E0B"}}>📌 {r.managerNote}</div>}</div>
-            {r.photo&&<img src={r.photo} onClick={()=>setImgModal(r.photo)} style={{width:56,height:56,objectFit:"cover",borderRadius:8,cursor:"pointer",border:"2px solid #D4EDD6"}} alt=""/>}
+            {r.hasPhoto!==false&&<LazyPhoto recordId={r.id} onClick={(photo)=>setImgModal(photo)}/>}
             <button onClick={()=>{setNoteModal(r.id);setNoteText(r.managerNote||"");}} style={{...Btn("ghost",{padding:"5px 9px",fontSize:11})}}>📌 Note</button>
           </div>);})}
         </div>))}
