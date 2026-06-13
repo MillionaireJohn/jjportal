@@ -208,8 +208,7 @@ Week: ${mon.getDate()}/${mon.getMonth()+1} – ${sun.getDate()}/${sun.getMonth()
       msg+=`  ${slot==="morning"?"🌅":"🌆"} ${label}: ${staffName}
 `;
     });
-    msg+="
-";
+    msg+="\n";
   });
 
   if(unfilled.length>0){
@@ -222,9 +221,7 @@ Week: ${mon.getDate()}/${mon.getMonth()+1} – ${sun.getDate()}/${sun.getMonth()
   }else{
     msg+="✅ All slots filled!";
   }
-  msg+="
-
-— JJ Portal · Ningji Lemon Tea";
+  msg+="\n\n— JJ Portal · Ningji Lemon Tea";
   return msg;
 };
 
