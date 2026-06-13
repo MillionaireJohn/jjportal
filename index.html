@@ -115,6 +115,117 @@ const db={
   upsertSalary:async(s)=>await sb.from("sent_salaries").upsert({id:s.id,staff_id:s.staffId,month:s.month,year:s.year,total_hours:s.totalHours,total_pay:s.totalPay,rate:s.rate,breakdown:s.breakdown,sent_at:s.sentAt},{onConflict:"id"}),
   getAccounts:async()=>{const{data}=await sb.from("staff_accounts").select("*");return data||[];},
   upsertAccount:async(a)=>await sb.from("staff_accounts").upsert({staff_id:a.staffId||a.staff_id,username:a.username,password:a.password}),
+
+  // Availability
+  getAvailability:async(weekStart)=>{
+    const{data}=await sb.from("availability").select("*").eq("week_start",weekStart);
+    return(data||[]).map(r=>({id:r.id,staffId:r.staff_id,weekStart:r.week_start,date:r.date,slot:r.slot}));
+  },
+  submitAvailability:async(staffId,weekStart,entries)=>{
+    // entries = [{date, slot}]
+    const rows=entries.map(e=>({id:`${staffId}-${e.date}`,staff_id:staffId,week_start:weekStart,date:e.date,slot:e.slot,submitted_at:new Date().toISOString()}));
+    await sb.from("availability").upsert(rows,{onConflict:"staff_id,date"});
+  },
+  deleteAvailability:async(staffId,weekStart)=>{
+    await sb.from("availability").delete().eq("staff_id",staffId).eq("week_start",weekStart);
+  },
+};
+
+
+// ── Auto-Schedule Helpers ─────────────────────────────────
+const AUTO_SCHEDULE_EXCLUDED=["0","6","7","8"]; // John, Joey, Jaclyn, James
+
+const getNextWeekMonday=()=>{
+  const today=new Date();
+  const day=today.getDay(); // 0=Sun,6=Sat
+  let daysToMon=day===0?1:day===6?2:(8-day);
+  const mon=new Date(today);
+  mon.setDate(today.getDate()+daysToMon);
+  mon.setHours(0,0,0,0);
+  return mon;
+};
+
+const getWeekDatesFrom=monday=>{
+  return Array.from({length:7},(_,i)=>{const d=new Date(monday);d.setDate(monday.getDate()+i);return d;});
+};
+
+const getSlots=date=>{
+  const isWE=date.getDay()===0||date.getDay()===6;
+  return[
+    {slot:"morning",start:isWE?"11:00":"10:30",end:"16:30",label:isWE?"11am–4:30pm":"10:30am–4:30pm"},
+    {slot:"evening",start:"16:30",end:"22:00",label:"4:30pm–10pm"},
+  ];
+};
+
+const isSubmissionWindow=()=>{
+  const day=new Date().getDay();
+  return day===6||day===0; // Saturday or Sunday
+};
+
+const generateAutoSchedule=(weekDates,availabilities,staff)=>{
+  const eligible=staff.filter(s=>!AUTO_SCHEDULE_EXCLUDED.includes(s.id));
+  const unfilled=[];
+  const shifts=[];
+
+  weekDates.forEach(date=>{
+    const dateKey=toKey(date);
+    getSlots(date).forEach(({slot,start,end,label})=>{
+      // Find eligible staff available for this slot
+      const avail=availabilities.filter(a=>
+        a.date===dateKey&&(a.slot===slot||a.slot==="both")&&
+        eligible.find(s=>s.id===a.staffId)
+      );
+      if(avail.length===0){
+        unfilled.push({date,label});
+      }else{
+        // Randomly pick one
+        const picked=avail[Math.floor(Math.random()*avail.length)];
+        shifts.push({id:Date.now().toString()+Math.random().toString(36).slice(2),staffId:picked.staffId,start,end,note:"",isPH:false,date:dateKey});
+      }
+    });
+  });
+
+  return{shifts,unfilled};
+};
+
+const buildTelegramMsg=(weekDates,shifts,unfilled,staff)=>{
+  const mon=weekDates[0];
+  const sun=weekDates[6];
+  let msg=`🗓️ <b>Auto Schedule Generated!</b>
+Week: ${mon.getDate()}/${mon.getMonth()+1} – ${sun.getDate()}/${sun.getMonth()+1}
+
+`;
+
+  weekDates.forEach(date=>{
+    const dateKey=toKey(date);
+    const dayShifts=shifts.filter(s=>s.date===dateKey);
+    const dayName=date.toLocaleDateString("en-MY",{weekday:"short"});
+    msg+=`<b>${date.getDate()}/${date.getMonth()+1} ${dayName}</b>
+`;
+    getSlots(date).forEach(({slot,label})=>{
+      const sh=dayShifts.find(s=>s.start===(slot==="morning"?(date.getDay()===0||date.getDay()===6?"11:00":"10:30"):"16:30"));
+      const staffName=sh?staff.find(x=>x.id===sh.staffId)?.name:"—";
+      msg+=`  ${slot==="morning"?"🌅":"🌆"} ${label}: ${staffName}
+`;
+    });
+    msg+="
+";
+  });
+
+  if(unfilled.length>0){
+    msg+=`⚠️ <b>Unfilled slots (${unfilled.length}):</b>
+`;
+    unfilled.forEach(u=>{
+      msg+=`  • ${u.date.getDate()}/${u.date.getMonth()+1} ${u.date.toLocaleDateString("en-MY",{weekday:"short"})} — ${u.label}
+`;
+    });
+  }else{
+    msg+="✅ All slots filled!";
+  }
+  msg+="
+
+— JJ Portal · Ningji Lemon Tea";
+  return msg;
 };
 
 // ── SVGs ──────────────────────────────────────────────────
@@ -372,6 +483,100 @@ function ComplaintModal({staffId,staffName,onSave,onClose}){
   );
 }
 
+
+// ── Availability Section (Staff) ─────────────────────────
+function AvailabilitySection({staffId}){
+  const[avail,setAvail]=useState({}); // {dateKey: 'none'|'morning'|'evening'|'both'}
+  const[loading,setLoading]=useState(true);
+  const[saving,setSaving]=useState(false);
+  const[saved,setSaved]=useState(false);
+  const isWindow=isSubmissionWindow();
+  const nextMon=getNextWeekMonday();
+  const weekStr=toKey(nextMon);
+  const weekDates=getWeekDatesFrom(nextMon);
+
+  useEffect(()=>{
+    (async()=>{
+      setLoading(true);
+      const data=await db.getAvailability(weekStr);
+      const mine=data.filter(a=>a.staffId===staffId);
+      const map={};
+      mine.forEach(a=>{map[a.date]=a.slot;});
+      // Default all days to 'none'
+      weekDates.forEach(d=>{if(!map[toKey(d)])map[toKey(d)]="none";});
+      setAvail(map);
+      setLoading(false);
+    })();
+  },[]);
+
+  const submit=async()=>{
+    setSaving(true);
+    const entries=Object.entries(avail).map(([date,slot])=>({date,slot}));
+    await db.submitAvailability(staffId,weekStr,entries);
+    setSaving(false);setSaved(true);
+    setTimeout(()=>setSaved(false),3000);
+  };
+
+  const mon=weekDates[0],sun=weekDates[6];
+  const slotOptions=[
+    {v:"none",l:"❌ Not Available"},
+    {v:"morning",l:"🌅 Morning"},
+    {v:"evening",l:"🌆 Evening"},
+    {v:"both",l:"✅ Both"},
+  ];
+
+  return(
+    <div style={{...Card(),marginBottom:16}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
+        <div>
+          <h3 style={{margin:"0 0 2px",fontSize:14,fontWeight:700,color:"#1A2E1B"}}>📆 My Availability</h3>
+          <p style={{margin:0,fontSize:11,color:"#6B7B6C"}}>
+            Week: {mon.getDate()}/{mon.getMonth()+1} – {sun.getDate()}/{sun.getMonth()+1}
+            {!isWindow&&<span style={{marginLeft:6,color:"#F59E0B",fontWeight:600}}>(Submit Sat–Sun only)</span>}
+          </p>
+        </div>
+        {saved&&<span style={{color:"#2EAD3F",fontSize:12,fontWeight:600}}>✅ Saved!</span>}
+      </div>
+      {loading?(
+        <p style={{color:"#6B7B6C",fontSize:13}}>Loading...</p>
+      ):(
+        <>
+          {weekDates.map(date=>{
+            const dk=toKey(date);
+            const isWE=date.getDay()===0||date.getDay()===6;
+            const dayLabel=date.toLocaleDateString("en-MY",{weekday:"short"});
+            const dateLabel=`${date.getDate()}/${date.getMonth()+1}`;
+            return(
+              <div key={dk} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 0",borderBottom:"1px solid #F0F7F0"}}>
+                <div style={{minWidth:90}}>
+                  <span style={{fontSize:13,fontWeight:600,color:"#1A2E1B"}}>{dayLabel} {dateLabel}</span>
+                  {isWE&&<span style={{marginLeft:5,fontSize:9,background:"#E8F8EA",color:"#2EAD3F",padding:"1px 5px",borderRadius:4,fontWeight:700}}>WE</span>}
+                </div>
+                <select
+                  value={avail[dk]||"none"}
+                  onChange={e=>setAvail(p=>({...p,[dk]:e.target.value}))}
+                  disabled={!isWindow}
+                  style={{...Inp({width:"auto",padding:"6px 10px",fontSize:12}),background:avail[dk]==="none"?"#FEF2F2":avail[dk]==="both"?"#E8F8EA":"#FFF9E6",color:avail[dk]==="none"?"#EF4444":avail[dk]==="both"?"#2EAD3F":"#92400E",fontWeight:600}}
+                >
+                  {slotOptions.map(o=>(<option key={o.v} value={o.v}>{o.l}</option>))}
+                </select>
+              </div>
+            );
+          })}
+          {isWindow&&(
+            <button onClick={submit} disabled={saving} style={{...Btn("primary",{width:"100%",justifyContent:"center",padding:"12px",borderRadius:12,background:"linear-gradient(135deg,#3DB54A,#1A7A2C)",marginTop:14}),opacity:saving?.7:1}}>
+              {saving?"Saving...":"📤 Submit Availability"}
+            </button>
+          )}
+          {!isWindow&&(
+            <p style={{margin:"10px 0 0",fontSize:11,color:"#6B7B6C",textAlign:"center"}}>Submission opens every Saturday 😊</p>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 // ── Staff App ─────────────────────────────────────────────
 function StaffApp({me,onLogout}){
   const[cModal,setCModal]=useState(null);
@@ -458,6 +663,7 @@ function StaffApp({me,onLogout}){
           </div>
           {mySal[0].breakdown&&mySal[0].breakdown.length>0&&(<details><summary style={{cursor:"pointer",fontSize:12,fontWeight:600,color:"#2EAD3F"}}>View Daily Breakdown ▸</summary><div style={{marginTop:8}}>{mySal[0].breakdown.map((b,i)=>(<div key={i} style={{display:"flex",justifyContent:"space-between",padding:"5px 10px",background:"#F4FBF5",borderRadius:6,marginBottom:3,fontSize:12}}><span>{new Date(b.date).toLocaleDateString("en-MY",{weekday:"short",month:"short",day:"numeric"})}{b.isPH?" 🎉":""}</span><span style={{color:"#6B7B6C"}}>{b.hours.toFixed(2)}h @ RM{b.rate.toFixed(2)}</span><span style={{color:"#2EAD3F",fontWeight:600}}>RM {(b.hours*b.rate).toFixed(2)}</span></div>))}</div></details>)}
         </div>)}
+        <AvailabilitySection staffId={me.id}/>
         <div style={Card()}>
           <h3 style={{margin:"0 0 8px",fontSize:14,fontWeight:700,color:"#1A2E1B"}}>📋 Store Report</h3>
           <p style={{color:"#6B7B6C",fontSize:12,marginBottom:12}}>Report store issues — equipment, maintenance, etc.</p>
@@ -592,10 +798,46 @@ function SchedulePage({staff,schedules,reload}){
   const[ns,setNs]=useState({staffId:"",start:"10:00",end:"15:00",note:"",isPH:false});
   const[copied,setCopied]=useState("");
   const[editingShift,setEditingShift]=useState(null);
+  const[showAutoModal,setShowAutoModal]=useState(false);
+  const[autoData,setAutoData]=useState(null); // {weekDates, availabilities, preview}
+  const[autoLoading,setAutoLoading]=useState(false);
+  const[autoGenerating,setAutoGenerating]=useState(false);
   const wd=weekOf(anchor),sy=anchor.getFullYear(),sm=anchor.getMonth();
   const add=async()=>{if(!ns.staffId)return;const shift={id:Date.now().toString(),...ns};await db.addShift(toKey(modal.date),shift);reload();setNs({staffId:"",start:"10:00",end:"15:00",note:"",isPH:false});};
   const del=async(id)=>{await db.deleteShift(id);reload();};
   const saveEdit=async(oldId)=>{if(!editingShift)return;await db.deleteShift(oldId);await db.addShift(toKey(modal.date),{...editingShift,id:Date.now().toString()});setEditingShift(null);reload();};
+
+  const openAutoModal=async()=>{
+    setAutoLoading(true);setShowAutoModal(true);setAutoData(null);
+    const nextMon=getNextWeekMonday();
+    const weekStr=toKey(nextMon);
+    const weekDates=getWeekDatesFrom(nextMon);
+    const avails=await db.getAvailability(weekStr);
+    // Count submissions per staff
+    const submittedStaff=[...new Set(avails.map(a=>a.staffId))];
+    const eligible=staff.filter(s=>!AUTO_SCHEDULE_EXCLUDED.includes(s.id));
+    // Generate preview
+    const{shifts:previewShifts,unfilled}=generateAutoSchedule(weekDates,avails,staff);
+    setAutoData({weekDates,avails,previewShifts,unfilled,submittedStaff,eligible,weekStr});
+    setAutoLoading(false);
+  };
+
+  const applyAutoSchedule=async()=>{
+    if(!autoData)return;
+    setAutoGenerating(true);
+    const{weekDates,avails,weekStr}=autoData;
+    // Regenerate fresh (random)
+    const{shifts,unfilled}=generateAutoSchedule(weekDates,avails,staff);
+    // Save all shifts
+    await Promise.all(shifts.map(s=>db.addShift(s.date,s)));
+    // Send Telegram
+    const msg=buildTelegramMsg(weekDates,shifts,unfilled,staff);
+    await tg(msg);
+    reload();
+    setAutoGenerating(false);
+    setShowAutoModal(false);
+    alert(`✅ Schedule generated! ${shifts.length} shifts created.${unfilled.length>0?`\n⚠️ ${unfilled.length} slots unfilled — check Telegram.`:""}`);
+  };
   const genTxt=(s,y,m)=>{const lines=[`${s.name}:`];const fullDays=["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];const dim=new Date(y,m+1,0).getDate();for(let d=1;d<=dim;d++){const date=new Date(y,m,d),k=toKey(date);(schedules[k]||[]).filter(x=>x.staffId===s.id).forEach(sh=>{lines.push(`${d}/${m+1} ${fullDays[date.getDay()]} ${fmt(sh.start)} - ${fmt(sh.end)}${sh.isPH?" (PH)":""}${sh.note?` (${sh.note})`:""}`);});}return lines.join("\n");};
   const copy=s=>{navigator.clipboard.writeText(genTxt(s,sy,sm));setCopied(s.id);setTimeout(()=>setCopied(""),2000);};
   const wa=s=>{if(!s.phone){alert("No phone for "+s.name);return;}window.open(`https://wa.me/${s.phone.replace(/\D/g,"")}?text=${encodeURIComponent(genTxt(s,sy,sm))}`,"_blank");};
@@ -603,10 +845,11 @@ function SchedulePage({staff,schedules,reload}){
   const nav=d=>{const x=new Date(anchor);if(view==="week")x.setDate(x.getDate()+d*7);else x.setMonth(x.getMonth()+d);setAnchor(x);};
   const isT=date=>toKey(date)===toKey(today);
   return(
-    <div>
+    <>
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:22,flexWrap:"wrap",gap:12}}>
         <div><h1 style={{fontSize:24,fontWeight:700,color:"#1A2E1B",margin:"0 0 2px"}}>Schedule</h1><p style={{color:"#6B7B6C",margin:0,fontSize:13}}>Assign and manage staff shifts</p></div>
         <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+          <button onClick={openAutoModal} style={{...Btn("primary",{background:"linear-gradient(135deg,#8B5CF6,#6D28D9)",borderRadius:10})}}>🎲 Auto Schedule</button>
           <div style={{display:"flex",background:"white",border:"1.5px solid #D4EDD6",borderRadius:8,overflow:"hidden"}}>{["week","month"].map(v=>(<button key={v} onClick={()=>setView(v)} style={{padding:"8px 15px",border:"none",cursor:"pointer",fontSize:13,fontWeight:500,background:v===view?"#2EAD3F":"transparent",color:v===view?"white":"#6B7B6C",fontFamily:"'DM Sans',sans-serif"}}>{v.charAt(0).toUpperCase()+v.slice(1)}</button>))}</div>
           <div style={{display:"flex",alignItems:"center",gap:4,background:"white",border:"1.5px solid #D4EDD6",borderRadius:8,padding:4}}>
             <button onClick={()=>nav(-1)} style={Btn("ghost",{padding:"4px 10px"})}>‹</button>
@@ -701,7 +944,90 @@ function SchedulePage({staff,schedules,reload}){
           </div>
         </div>
       </div>)}
-    </div>
+
+      {/* ── Auto Schedule Modal ── */}
+      {showAutoModal&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.55)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:300,padding:20}}>
+          <div style={{background:"white",borderRadius:20,padding:28,width:500,maxHeight:"88vh",overflowY:"auto",boxShadow:"0 24px 80px rgba(0,0,0,.3)"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
+              <div>
+                <h3 style={{margin:"0 0 2px",fontSize:18,fontWeight:700,color:"#1A2E1B"}}>🎲 Auto Schedule</h3>
+                {autoData&&<p style={{margin:0,fontSize:12,color:"#6B7B6C"}}>
+                  Week: {autoData.weekDates[0].getDate()}/{autoData.weekDates[0].getMonth()+1} – {autoData.weekDates[6].getDate()}/{autoData.weekDates[6].getMonth()+1}
+                </p>}
+              </div>
+              <button onClick={()=>setShowAutoModal(false)} style={{background:"none",border:"none",cursor:"pointer",fontSize:20,color:"#6B7B6C"}}>✕</button>
+            </div>
+
+            {autoLoading&&(
+              <div style={{textAlign:"center",padding:"32px 0"}}>
+                <div style={{fontSize:36,marginBottom:12}}>⏳</div>
+                <p style={{color:"#6B7B6C",fontSize:14}}>Loading availability data...</p>
+              </div>
+            )}
+
+            {!autoLoading&&autoData&&(
+              <>
+                {/* Submission summary */}
+                <div style={{background:"#F4FBF5",borderRadius:12,padding:"14px 16px",marginBottom:16}}>
+                  <p style={{margin:"0 0 8px",fontSize:13,fontWeight:600,color:"#1A2E1B"}}>
+                    📊 Submissions: {autoData.submittedStaff.length}/{autoData.eligible.length} staff submitted
+                  </p>
+                  <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+                    {autoData.eligible.map(s=>{
+                      const submitted=autoData.submittedStaff.includes(s.id);
+                      return(<span key={s.id} style={{padding:"3px 10px",borderRadius:20,fontSize:12,fontWeight:600,background:submitted?"#E8F8EA":"#FEF2F2",color:submitted?"#2EAD3F":"#EF4444"}}>{submitted?"✅":"❌"} {s.name}</span>);
+                    })}
+                  </div>
+                </div>
+
+                {/* Preview */}
+                <p style={{margin:"0 0 10px",fontSize:13,fontWeight:600,color:"#1A2E1B"}}>📅 Preview (random — changes each generate):</p>
+                {autoData.weekDates.map(date=>{
+                  const dk=toKey(date);
+                  const isWE=date.getDay()===0||date.getDay()===6;
+                  return(
+                    <div key={dk} style={{marginBottom:8,padding:"10px 12px",background:"#F9FFF9",borderRadius:10,border:"1.5px solid #D4EDD6"}}>
+                      <div style={{fontSize:13,fontWeight:700,color:"#1A2E1B",marginBottom:6}}>
+                        {date.getDate()}/{date.getMonth()+1} {date.toLocaleDateString("en-MY",{weekday:"long"})}
+                        {isWE&&<span style={{marginLeft:6,fontSize:10,background:"#E8F8EA",color:"#2EAD3F",padding:"1px 6px",borderRadius:4}}>Weekend</span>}
+                      </div>
+                      {getSlots(date).map(({slot,label})=>{
+                        const sh=autoData.previewShifts.find(s=>s.date===dk&&s.start===(slot==="morning"?(isWE?"11:00":"10:30"):"16:30"));
+                        const staffName=sh?staff.find(x=>x.id===sh.staffId)?.name:null;
+                        const isUnfilled=autoData.unfilled.find(u=>toKey(u.date)===dk&&u.label===label);
+                        return(
+                          <div key={slot} style={{display:"flex",alignItems:"center",justifyContent:"space-between",fontSize:12,marginBottom:3}}>
+                            <span style={{color:"#6B7B6C"}}>{slot==="morning"?"🌅":"🌆"} {label}</span>
+                            <span style={{fontWeight:600,color:staffName?"#1A2E1B":"#EF4444"}}>
+                              {staffName||"⚠️ No one available"}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })}
+
+                {autoData.unfilled.length>0&&(
+                  <div style={{background:"#FEF9C3",border:"1.5px solid #FDE68A",borderRadius:10,padding:"10px 14px",marginBottom:14}}>
+                    <p style={{margin:"0 0 4px",fontSize:13,fontWeight:600,color:"#92400E"}}>⚠️ {autoData.unfilled.length} slot(s) cannot be filled</p>
+                    <p style={{margin:0,fontSize:12,color:"#92400E"}}>Manager will be notified via Telegram.</p>
+                  </div>
+                )}
+
+                <div style={{display:"flex",gap:10,marginTop:4}}>
+                  <button onClick={openAutoModal} style={{...Btn("sec",{flex:1,justifyContent:"center"}),fontSize:13}}>🔄 Regenerate</button>
+                  <button onClick={applyAutoSchedule} disabled={autoGenerating} style={{...Btn("primary",{flex:2,justifyContent:"center",background:"linear-gradient(135deg,#8B5CF6,#6D28D9)"}),opacity:autoGenerating?.7:1,fontSize:13}}>
+                    {autoGenerating?"Generating...":"✅ Apply & Notify Telegram"}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 
