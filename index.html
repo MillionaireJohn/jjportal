@@ -56,6 +56,8 @@ const DSTAFF=[
   {id:"6",name:"Joey",phone:"",ic:"",emergency:"",dateJoined:"",hourlyRate:14,rateWeekday:14,rateWeekend:14,ratePHWeekday:16,ratePHWeekend:16,photo:""},
   {id:"7",name:"Jaclyn",phone:"",ic:"",emergency:"",dateJoined:"",hourlyRate:14,rateWeekday:14,rateWeekend:14,ratePHWeekday:16,ratePHWeekend:16,photo:""},
   {id:"8",name:"James",phone:"",ic:"",emergency:"",dateJoined:"",hourlyRate:14,rateWeekday:14,rateWeekend:14,ratePHWeekday:16,ratePHWeekend:16,photo:""},
+  {id:"9",name:"Xandria",phone:"",ic:"",emergency:"",dateJoined:"",hourlyRate:12,rateWeekday:12,rateWeekend:13,ratePHWeekday:14,ratePHWeekend:15,photo:""},
+  {id:"10",name:"Evelyn",phone:"",ic:"",emergency:"",dateJoined:"",hourlyRate:12,rateWeekday:12,rateWeekend:13,ratePHWeekday:14,ratePHWeekend:15,photo:""},
 ];
 const DACCS=[
   {staffId:"0",username:"jhchong1309",password:"ningji2947"},
@@ -67,6 +69,8 @@ const DACCS=[
   {staffId:"6",username:"joey796254",password:"ningji1758"},
   {staffId:"7",username:"jaclyncwc",password:"ningji7391"},
   {staffId:"8",username:"jamescheah1382",password:"ningji4820"},
+  {staffId:"9",username:"xandria",password:"ningji6824"},
+  {staffId:"10",username:"evelyn",password:"ningji3175"},
 ];
 
 // ── Helpers ───────────────────────────────────────────────
@@ -1393,6 +1397,30 @@ function ManagerAvailabilityPage({staff}){
   );
 }
 
+
+// ── Error Boundary (prevents blank white page on crashes) ──
+class ErrorBoundary extends React.Component{
+  constructor(props){super(props);this.state={hasError:false,error:null};}
+  static getDerivedStateFromError(error){return{hasError:true,error};}
+  componentDidCatch(error,info){console.error("App crashed:",error,info);}
+  render(){
+    if(this.state.hasError){
+      return(
+        <div style={{minHeight:"100vh",background:"#F4FBF5",display:"flex",alignItems:"center",justifyContent:"center",padding:20,fontFamily:"'DM Sans',sans-serif"}}>
+          <div style={{background:"white",borderRadius:16,padding:32,maxWidth:420,textAlign:"center",boxShadow:"0 8px 32px rgba(0,0,0,.1)"}}>
+            <div style={{fontSize:48,marginBottom:16}}>⚠️</div>
+            <h2 style={{fontSize:18,fontWeight:700,color:"#1A2E1B",marginBottom:8}}>Something went wrong</h2>
+            <p style={{fontSize:13,color:"#6B7B6C",marginBottom:6}}>The app hit an error and couldn't continue.</p>
+            <p style={{fontSize:11,color:"#EF4444",background:"#FEF2F2",padding:"8px 12px",borderRadius:8,marginBottom:16,wordBreak:"break-word",textAlign:"left"}}>{String(this.state.error?.message||this.state.error||"Unknown error")}</p>
+            <button onClick={()=>window.location.reload()} style={{background:"#2EAD3F",color:"white",border:"none",borderRadius:10,padding:"12px 24px",fontWeight:600,fontSize:14,cursor:"pointer",fontFamily:"'DM Sans',sans-serif"}}>🔄 Reload App</button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 // ── Main App ──────────────────────────────────────────────
 function App(){
   const[ut,setUt]=useState(null);
@@ -1468,7 +1496,7 @@ function App(){
   );
 }
 
-ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+ReactDOM.createRoot(document.getElementById("root")).render(<ErrorBoundary><App/></ErrorBoundary>);
 </script>
 </body>
 </html>
