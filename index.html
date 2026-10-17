@@ -59,6 +59,7 @@ const DSTAFF=[
   {id:"9",name:"Xandria",phone:"",ic:"",emergency:"",dateJoined:"",hourlyRate:12,rateWeekday:12,rateWeekend:13,ratePHWeekday:14,ratePHWeekend:15,photo:""},
   {id:"10",name:"Evelyn",phone:"",ic:"",emergency:"",dateJoined:"",hourlyRate:12,rateWeekday:12,rateWeekend:13,ratePHWeekday:14,ratePHWeekend:15,photo:""},
   {id:"11",name:"Tianai",phone:"",ic:"",emergency:"",dateJoined:"",hourlyRate:12.5,rateWeekday:12.5,rateWeekend:13.5,ratePHWeekday:14.5,ratePHWeekend:15.5,photo:""},
+  {id:"12",name:"Lele",phone:"",ic:"",emergency:"",dateJoined:"",hourlyRate:12,rateWeekday:12,rateWeekend:13,ratePHWeekday:14,ratePHWeekend:15,photo:""},
 ];
 const DACCS=[
   {staffId:"0",username:"jhchong1309",password:"ningji2947"},
@@ -73,6 +74,7 @@ const DACCS=[
   {staffId:"9",username:"xandria",password:"ningji6824"},
   {staffId:"10",username:"evelyn",password:"ningji3175"},
   {staffId:"11",username:"tianai",password:"ningji5427"},
+  {staffId:"12",username:"lele",password:"ningji8163"},
 ];
 
 // ── Helpers ───────────────────────────────────────────────
@@ -97,8 +99,8 @@ const stamp=(canvas,ctx,name,type)=>{const now=new Date();const ts=now.toLocaleS
 
 // ── DB helpers ─────────────────────────────────────────────
 const db={
-  getStaff:async()=>{const{data}=await sb.from("staff").select("*").order("id");return(data||[]).map(r=>({id:r.id,name:r.name,phone:r.phone||"",ic:r.ic||"",emergency:r.emergency||"",dateJoined:r.date_joined||"",hourlyRate:r.hourly_rate||7.5,rateWeekday:r.rate_weekday||r.hourly_rate||7.5,rateWeekend:r.rate_weekend||r.hourly_rate||7.5,ratePHWeekday:r.rate_ph_weekday||r.hourly_rate||7.5,ratePHWeekend:r.rate_ph_weekend||r.hourly_rate||7.5,photo:r.photo||""}));},
-  upsertStaff:async(s)=>await sb.from("staff").upsert({id:s.id,name:s.name,phone:s.phone||"",ic:s.ic||"",emergency:s.emergency||"",date_joined:s.dateJoined||"",hourly_rate:s.rateWeekday||s.hourlyRate||7.5,rate_weekday:s.rateWeekday||7.5,rate_weekend:s.rateWeekend||7.5,rate_ph_weekday:s.ratePHWeekday||7.5,rate_ph_weekend:s.ratePHWeekend||7.5,photo:s.photo||""}),
+  getStaff:async()=>{const{data}=await sb.from("staff").select("*").order("id");return(data||[]).map(r=>({id:r.id,name:r.name,phone:r.phone||"",ic:r.ic||"",emergency:r.emergency||"",dateJoined:r.date_joined||"",hourlyRate:r.hourly_rate||7.5,rateWeekday:r.rate_weekday||r.hourly_rate||7.5,rateWeekend:r.rate_weekend||r.hourly_rate||7.5,ratePHWeekday:r.rate_ph_weekday||r.hourly_rate||7.5,ratePHWeekend:r.rate_ph_weekend||r.hourly_rate||7.5,maxDays:(r.max_days===null||r.max_days===undefined)?null:r.max_days,photo:r.photo||""}));},
+  upsertStaff:async(s)=>await sb.from("staff").upsert({id:s.id,name:s.name,phone:s.phone||"",ic:s.ic||"",emergency:s.emergency||"",date_joined:s.dateJoined||"",hourly_rate:s.rateWeekday||s.hourlyRate||7.5,rate_weekday:s.rateWeekday||7.5,rate_weekend:s.rateWeekend||7.5,rate_ph_weekday:s.ratePHWeekday||7.5,rate_ph_weekend:s.ratePHWeekend||7.5,max_days:(s.maxDays===""||s.maxDays===null||s.maxDays===undefined||isNaN(parseInt(s.maxDays)))?null:parseInt(s.maxDays),photo:s.photo||""}),
   deleteStaff:async(id)=>await sb.from("staff").delete().eq("id",id),
   getSchedules:async()=>{const{data}=await sb.from("schedules").select("*");if(!data)return{};const map={};data.forEach(r=>{if(!map[r.date])map[r.date]=[];map[r.date].push({id:r.id,staffId:r.staff_id,start:r.start_time,end:r.end_time,note:r.note||"",isPH:r.is_ph||false});});return map;},
   addShift:async(date,shift)=>await sb.from("schedules").insert({id:shift.id,date,staff_id:shift.staffId,start_time:shift.start,end_time:shift.end,note:shift.note||"",is_ph:shift.isPH||false}),
@@ -178,33 +180,54 @@ const getSlots=date=>{
 
 const isSubmissionWindow=()=>{
   const day=new Date().getDay();
-  return day>=1&&day<=4; // Monday(1) to Thursday(4)
+  return day>=2&&day<=4; // Tuesday(2) to Thursday(4)
 };
 
-const generateAutoSchedule=(weekDates,availabilities,staff)=>{
+const generateAutoScheduleOnce=(weekDates,availabilities,staff)=>{
   const eligible=staff.filter(s=>!AUTO_SCHEDULE_EXCLUDED.includes(s.id));
-  const unfilled=[];
-  const shifts=[];
-
+  const cap=id=>{const s=eligible.find(x=>x.id===id);const m=s&&s.maxDays;return(m===null||m===undefined||m==="")?Infinity:Number(m);};
+  const count={};            // shifts given to each person this week
+  const workingOn={};        // dateKey -> Set of staffIds already working that day
+  const shifts=[],unfilled=[];
+  // Build every slot with its list of available people
+  const slots=[];
   weekDates.forEach(date=>{
     const dateKey=toKey(date);
     getSlots(date).forEach(({slot,start,end,label})=>{
-      // Find eligible staff available for this slot
-      const avail=availabilities.filter(a=>
-        a.date===dateKey&&(a.slot===slot||a.slot==="both")&&
-        eligible.find(s=>s.id===a.staffId)
-      );
-      if(avail.length===0){
-        unfilled.push({date,label});
-      }else{
-        // Randomly pick one
-        const picked=avail[Math.floor(Math.random()*avail.length)];
-        shifts.push({id:Date.now().toString()+Math.random().toString(36).slice(2),staffId:picked.staffId,start,end,note:"",isPH:false,date:dateKey});
-      }
+      const cands=[...new Set(availabilities.filter(a=>a.date===dateKey&&(a.slot===slot||a.slot==="both")&&eligible.find(s=>s.id===a.staffId)).map(a=>a.staffId))];
+      slots.push({date,dateKey,start,end,label,cands,r:Math.random()});
     });
   });
-
+  // Fill the hardest slots (fewest available people) first so fewer slots end up empty
+  slots.sort((a,b)=>a.cands.length-b.cands.length||a.r-b.r);
+  slots.forEach(sl=>{
+    const busy=workingOn[sl.dateKey]||new Set();
+    const ok=sl.cands.filter(id=>!busy.has(id)&&(count[id]||0)<cap(id)); // rule 1: once per day; rule 2: weekly cap
+    if(ok.length===0){unfilled.push({date:sl.date,label:sl.label});return;}
+    const least=Math.min(...ok.map(id=>count[id]||0));                      // rule 3: fewest shifts first
+    const tied=ok.filter(id=>(count[id]||0)===least);
+    const picked=tied[Math.floor(Math.random()*tied.length)];
+    count[picked]=(count[picked]||0)+1;
+    busy.add(picked);workingOn[sl.dateKey]=busy;
+    shifts.push({id:Date.now().toString()+Math.random().toString(36).slice(2),staffId:picked,start:sl.start,end:sl.end,note:"",isPH:false,date:sl.dateKey});
+  });
+  shifts.sort((a,b)=>a.date.localeCompare(b.date)||a.start.localeCompare(b.start));
+  unfilled.sort((a,b)=>a.date-b.date);
   return{shifts,unfilled};
+};
+
+// Try many random arrangements and keep the best: fewest empty slots first, then the most even spread
+const generateAutoSchedule=(weekDates,availabilities,staff)=>{
+  let best=null,bestScore=null;
+  for(let t=0;t<300;t++){
+    const r=generateAutoScheduleOnce(weekDates,availabilities,staff);
+    const cnt={};r.shifts.forEach(s=>cnt[s.staffId]=(cnt[s.staffId]||0)+1);
+    const v=Object.values(cnt);const spread=v.length?Math.max(...v)-Math.min(...v):0;
+    const score=[r.unfilled.length,spread];
+    if(!best||score[0]<bestScore[0]||(score[0]===bestScore[0]&&score[1]<bestScore[1])){best=r;bestScore=score;}
+    if(score[0]===0&&score[1]<=1)break;
+  }
+  return best;
 };
 
 const buildTelegramMsg=(weekDates,shifts,unfilled,staff)=>{
@@ -588,7 +611,7 @@ function AvailabilitySection({staffId}){
             </button>
           )}
           {!isWindow&&(
-            <p style={{margin:"10px 0 0",fontSize:11,color:"#6B7B6C",textAlign:"center"}}>Submission open Monday – Thursday 😊</p>
+            <p style={{margin:"10px 0 0",fontSize:11,color:"#6B7B6C",textAlign:"center"}}>Submission open Tuesday – Thursday 😊</p>
           )}
         </>
       )}
@@ -844,18 +867,20 @@ function SchedulePage({staff,schedules,reload}){
   const applyAutoSchedule=async()=>{
     if(!autoData)return;
     setAutoGenerating(true);
-    const{weekDates,avails,weekStr}=autoData;
-    // Regenerate fresh (random)
-    const{shifts,unfilled}=generateAutoSchedule(weekDates,avails,staff);
-    // Save all shifts
-    await Promise.all(shifts.map(s=>db.addShift(s.date,s)));
+    const{weekDates}=autoData;
+    // Save EXACTLY what the manager saw in the preview (no re-randomizing)
+    const shifts=autoData.previewShifts;
+    const unfilled=autoData.unfilled;
+    // Skip any slot that already has a shift at the same start time (prevents duplicates if Apply is pressed twice)
+    const toSave=shifts.filter(s=>!(schedules[s.date]||[]).some(ex=>ex.start===s.start));
+    await Promise.all(toSave.map(s=>db.addShift(s.date,s)));
     // Send Telegram
     const msg=buildTelegramMsg(weekDates,shifts,unfilled,staff);
     await tg(msg);
     reload();
     setAutoGenerating(false);
     setShowAutoModal(false);
-    alert(`✅ Schedule generated! ${shifts.length} shifts created.${unfilled.length>0?`\n⚠️ ${unfilled.length} slots unfilled — check Telegram.`:""}`);
+    alert(`✅ Schedule saved! ${toSave.length} shifts created${toSave.length<shifts.length?` (${shifts.length-toSave.length} skipped — already scheduled)`:""}.${unfilled.length>0?`\n⚠️ ${unfilled.length} slots unfilled — check Telegram.`:""}`);
   };
   const genTxt=(s,y,m)=>{const lines=[`${s.name}:`];const fullDays=["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];const dim=new Date(y,m+1,0).getDate();for(let d=1;d<=dim;d++){const date=new Date(y,m,d),k=toKey(date);(schedules[k]||[]).filter(x=>x.staffId===s.id).forEach(sh=>{lines.push(`${d}/${m+1} ${fullDays[date.getDay()]} ${fmt(sh.start)} - ${fmt(sh.end)}${sh.isPH?" (PH)":""}${sh.note?` (${sh.note})`:""}`);});}return lines.join("\n");};
   const copy=s=>{navigator.clipboard.writeText(genTxt(s,sy,sm));setCopied(s.id);setTimeout(()=>setCopied(""),2000);};
@@ -1001,7 +1026,17 @@ function SchedulePage({staff,schedules,reload}){
                 </div>
 
                 {/* Preview */}
-                <p style={{margin:"0 0 10px",fontSize:13,fontWeight:600,color:"#1A2E1B"}}>📅 Preview (random — changes each generate):</p>
+                <div style={{background:"#EEF2FF",borderRadius:12,padding:"12px 14px",marginBottom:16}}>
+                  <p style={{margin:"0 0 8px",fontSize:13,fontWeight:600,color:"#1A2E1B"}}>👥 Shifts per person</p>
+                  <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+                    {autoData.eligible.filter(s=>autoData.submittedStaff.includes(s.id)).map(s=>{
+                      const n=autoData.previewShifts.filter(x=>x.staffId===s.id).length;
+                      const lim=(s.maxDays===null||s.maxDays===undefined)?null:s.maxDays;
+                      return(<span key={s.id} style={{padding:"3px 10px",borderRadius:20,fontSize:12,fontWeight:600,background:n===0?"#FEF2F2":"white",color:n===0?"#EF4444":"#1A2E1B",border:"1px solid #C7D2FE"}}>{s.name}: {n}{lim!==null?` / ${lim}`:""}</span>);
+                    })}
+                  </div>
+                </div>
+                <p style={{margin:"0 0 10px",fontSize:13,fontWeight:600,color:"#1A2E1B"}}>📅 Preview (press 🔄 Regenerate for a different mix):</p>
                 {autoData.weekDates.map(date=>{
                   const dk=toKey(date);
                   const isWE=date.getDay()===0||date.getDay()===6;
@@ -1151,10 +1186,10 @@ function SalaryPage({staff,schedules,sentSalaries,reload}){
 function StaffPage({staff,reload}){
   const[modal,setModal]=useState(null);
   const[form,setForm]=useState({});
-  const openAdd=()=>{setForm({id:Date.now().toString(),name:"",phone:"",ic:"",emergency:"",dateJoined:"",rateWeekday:"",rateWeekend:"",ratePHWeekday:"",ratePHWeekend:"",photo:""});setModal("add");};
-  const openEdit=s=>{setForm({...s,rateWeekday:String(s.rateWeekday||""),rateWeekend:String(s.rateWeekend||""),ratePHWeekday:String(s.ratePHWeekday||""),ratePHWeekend:String(s.ratePHWeekend||"")});setModal("edit");};
+  const openAdd=()=>{setForm({id:Date.now().toString(),name:"",phone:"",ic:"",emergency:"",dateJoined:"",rateWeekday:"",rateWeekend:"",ratePHWeekday:"",ratePHWeekend:"",maxDays:"",photo:""});setModal("add");};
+  const openEdit=s=>{setForm({...s,rateWeekday:String(s.rateWeekday||""),rateWeekend:String(s.rateWeekend||""),ratePHWeekday:String(s.ratePHWeekday||""),ratePHWeekend:String(s.ratePHWeekend||""),maxDays:(s.maxDays===null||s.maxDays===undefined)?"":String(s.maxDays)});setModal("edit");};
   const remove=async id=>{if(window.confirm("Remove this staff member?")){await db.deleteStaff(id);reload();}};
-  const save=async()=>{if(!form.name.trim())return;const data={...form,rateWeekday:parseFloat(form.rateWeekday)||0,rateWeekend:parseFloat(form.rateWeekend)||0,ratePHWeekday:parseFloat(form.ratePHWeekday)||0,ratePHWeekend:parseFloat(form.ratePHWeekend)||0,hourlyRate:parseFloat(form.rateWeekday)||0};await db.upsertStaff(data);reload();setModal(null);};
+  const save=async()=>{if(!form.name.trim())return;const data={...form,rateWeekday:parseFloat(form.rateWeekday)||0,rateWeekend:parseFloat(form.rateWeekend)||0,ratePHWeekday:parseFloat(form.ratePHWeekday)||0,ratePHWeekend:parseFloat(form.ratePHWeekend)||0,hourlyRate:parseFloat(form.rateWeekday)||0,maxDays:form.maxDays===""?null:parseInt(form.maxDays)};const res=await db.upsertStaff(data);if(res&&res.error){alert("Save failed: "+res.error.message);return;}reload();setModal(null);};
   const photo=e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=()=>setForm(p=>({...p,photo:r.result}));r.readAsDataURL(f);};
   const Fld=(label,key,type="text",ph="")=>(<div style={{marginBottom:10}}><label style={{fontSize:12,fontWeight:500,color:"#6B7B6C",display:"block",marginBottom:3}}>{label}</label><input type={type} placeholder={ph} value={form[key]||""} onChange={e=>setForm(p=>({...p,[key]:e.target.value}))} style={Inp()}/></div>);
   return(
@@ -1162,7 +1197,7 @@ function StaffPage({staff,reload}){
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:22}}><div><h1 style={{fontSize:24,fontWeight:700,color:"#1A2E1B",margin:"0 0 2px"}}>Staff</h1><p style={{color:"#6B7B6C",margin:0,fontSize:13}}>{staff.length} team members</p></div><button onClick={openAdd} style={Btn("primary")}>+ Add Staff</button></div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:14}}>
         {staff.map(s=>(<div key={s.id} style={Card()}>
-          <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:12}}><div style={{width:50,height:50,borderRadius:"50%",background:gc(s.id),display:"flex",alignItems:"center",justifyContent:"center",color:"white",fontSize:16,fontWeight:700,flexShrink:0,overflow:"hidden"}}>{s.photo?<img src={s.photo} style={{width:50,height:50,objectFit:"cover"}} alt=""/>:gi(s.name)}</div><div><div style={{fontSize:15,fontWeight:700,color:"#1A2E1B"}}>{s.name}</div></div></div>
+          <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:12}}><div style={{width:50,height:50,borderRadius:"50%",background:gc(s.id),display:"flex",alignItems:"center",justifyContent:"center",color:"white",fontSize:16,fontWeight:700,flexShrink:0,overflow:"hidden"}}>{s.photo?<img src={s.photo} style={{width:50,height:50,objectFit:"cover"}} alt=""/>:gi(s.name)}</div><div><div style={{fontSize:15,fontWeight:700,color:"#1A2E1B"}}>{s.name}</div>{!AUTO_SCHEDULE_EXCLUDED.includes(s.id)&&<div style={{fontSize:11,fontWeight:600,color:"#6366F1",marginTop:2}}>🎲 {s.maxDays===null||s.maxDays===undefined?"No weekly limit":`Max ${s.maxDays} day${s.maxDays===1?"":"s"}/week`}</div>}</div></div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginBottom:12,background:"#F4FBF5",borderRadius:8,padding:"10px"}}>
             {[["Weekday",s.rateWeekday],["Weekend",s.rateWeekend],["PH Weekday",s.ratePHWeekday],["PH Weekend",s.ratePHWeekend]].map(([l,v],i)=>(<div key={i} style={{textAlign:"center"}}><div style={{fontSize:13,fontWeight:700,color:"#2EAD3F"}}>RM {parseFloat(v||0).toFixed(2)}</div><div style={{fontSize:9,color:"#6B7B6C"}}>{l}/h</div></div>))}
           </div>
@@ -1187,6 +1222,11 @@ function StaffPage({staff,reload}){
             {Fld("PH Weekend","ratePHWeekend","number","e.g. 15.50")}
           </div>
         </div>
+        {!AUTO_SCHEDULE_EXCLUDED.includes(form.id)&&(<div style={{background:"#EEF2FF",borderRadius:10,padding:"12px",marginBottom:10}}>
+          <p style={{fontSize:12,fontWeight:700,color:"#1A2E1B",margin:"0 0 8px"}}>🎲 Auto Schedule — Max days per week</p>
+          <input type="number" min="0" max="7" placeholder="Blank = no limit" value={form.maxDays??""} onChange={e=>setForm(p=>({...p,maxDays:e.target.value}))} style={Inp()}/>
+          <p style={{fontSize:11,color:"#6B7B6C",margin:"6px 0 0"}}>Raise it during sem break, lower it during exams. Leave blank for no limit.</p>
+        </div>)}
         <div style={{display:"flex",gap:10}}><button onClick={()=>setModal(null)} style={{...Btn("sec",{flex:1,justifyContent:"center"})}}>Cancel</button><button onClick={save} disabled={!form.name?.trim()} style={{...Btn("primary",{flex:2,justifyContent:"center"}),opacity:form.name?.trim()?1:.5}}>{modal==="add"?"Add Staff":"Save Changes"}</button></div>
       </div></div>)}
     </div>
